@@ -50,8 +50,10 @@ class RSNAKADDataset(torch.utils.data.Dataset):
                 key = f"image_{plane}"
                 important = [(i, plane, key, f) for f in files[n_files*20//100:n_files*80//100]]
                 all_files.extend(important)
-
-            sampled = random.sample(all_files, k=self.train_slices)
+            if len(all_files) < self.train_slices:
+                sampled = random.choices(all_files, k=self.train_slices)
+            else:
+                sampled = random.sample(all_files, k=self.train_slices)
 
             groups = defaultdict(list)
             for i, plane, key, file_path in sampled:

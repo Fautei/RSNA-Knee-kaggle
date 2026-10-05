@@ -1,0 +1,61 @@
+accumulate_grad_batches: 1
+adjust_contrast_gamma:
+- 0.7
+- 1.5
+adjust_contrast_prob: 0.0
+batch_size: 4
+crop_size:
+- 256
+- 256
+data_root: data
+encoder:
+  inner_dim: 256
+  n_queries: 64
+  name: efficientnet_b0.ra_in1k
+  num_heads: 32
+  pretrained: true
+epochs: 15
+flip_prob: 0.5
+gpus: 1
+image_size:
+- 384
+- 384
+label_columns:
+- ACL
+- MCL
+- Medial Meniscus
+- Lateral Meniscus
+- Medial OA
+- Lateral OA
+- PF OA
+- Effusion
+- Synovitis
+- Baker's
+- Contusion
+- Fracture
+learning_rate: 0.0003
+limit_train_batches: 1.0
+limit_val_batches: 1.0
+max_zoom: 1.2
+min_zoom: 0.8
+mlflow:
+  experiment_name: rsna_kad
+  tracking_uri: mlruns
+noise_prob: 0.1
+noise_std: 1.0
+num_workers: 12
+precision: 16-mixed
+scale_intensity_factors: 0.1
+scale_intensity_prob: 0.0
+seed: 42
+shift_intensity_offsets: 0.1
+shift_intensity_prob: 0.0
+slice_count: 32
+train_df_path: /home/maxim/Desktop/RSNA KAD/data/refined_predictions_advanced.csv
+train_series_dir: /home/maxim/Desktop/RSNA KAD/data/train_series
+train_series_path: /home/maxim/Desktop/RSNA KAD/data/train_series.csv
+val_df_path: /home/maxim/Desktop/RSNA KAD/data/valid.csv
+val_series_dir: /home/maxim/Desktop/RSNA KAD/data/train_series
+val_series_path: /home/maxim/Desktop/RSNA KAD/data/train_series.csv
+weight_decay: 0.01
+zoom_prob: 0.5

@@ -1,4 +1,8 @@
 accumulate_grad_batches: 2
+adjust_contrast_gamma:
+- 0.7
+- 1.5
+adjust_contrast_prob: 0.0
 batch_size: 8
 crop_size:
 - 256
@@ -37,9 +41,15 @@ min_zoom: 0.8
 mlflow:
   experiment_name: rsna_kad
   tracking_uri: mlruns
+noise_prob: 0.0
+noise_std: 0.33
 num_workers: 12
 precision: 16-mixed
+scale_intensity_factors: 0.1
+scale_intensity_prob: 0.0
 seed: 42
+shift_intensity_offsets: 0.1
+shift_intensity_prob: 0.0
 slice_count: 32
 train_df_path: /home/maxim/Desktop/RSNA KAD/data/refined_predictions_advanced.csv
 train_series_dir: /home/maxim/Desktop/RSNA KAD/data/train_series
@@ -48,4 +58,4 @@ val_df_path: /home/maxim/Desktop/RSNA KAD/data/valid.csv
 val_series_dir: /home/maxim/Desktop/RSNA KAD/data/train_series
 val_series_path: /home/maxim/Desktop/RSNA KAD/data/train_series.csv
 weight_decay: 0.01
-zoom_prob: 0.2
+zoom_prob: 0.5

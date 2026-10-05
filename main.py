@@ -25,7 +25,7 @@ from export import export
 class RSNAKADLightningModule(pl.LightningModule):
     def __init__(
         self,
-        num_classes,
+        labels,
         epochs = 10,
         lr = 1e-3,
         encoder_name: str = "convnext_tiny.fb_in1k",
@@ -36,7 +36,8 @@ class RSNAKADLightningModule(pl.LightningModule):
     ):
         super().__init__()
         self.save_hyperparameters()
-        self.num_classes = num_classes
+        self.num_classes = len(labels)
+        self.label_names = labels
 
         self.model = RSNAKADModel(
             num_classes=self.num_classes,
@@ -49,10 +50,9 @@ class RSNAKADLightningModule(pl.LightningModule):
 
         self.val_auroc = AUROC(
             task='multilabel',
-            num_labels=num_classes,
-            average='macro'  # или 'weighted', 'micro' в зависимости от задачи
+            num_labels=self.num_classes,
+            average=None 
         )
-
         self.val_preds: List[torch.Tensor] = []
         self.val_labels: List[torch.Tensor] = []
 
@@ -116,23 +116,32 @@ class RSNAKADLightningModule(pl.LightningModule):
         if len(self.val_preds) == 0:
             return
 
-        # Конкатенируем все батчи
         all_preds = torch.cat(self.val_preds, dim=0)
         all_labels = torch.cat(self.val_labels, dim=0)
 
-        # Считаем AUROC
-        auroc = self.val_auroc(all_preds, all_labels)
+
+        aurocs_per_class = self.val_auroc(all_preds, all_labels)
+
+        for i, label_name in enumerate(self.label_names):
+            self.log(
+                f"val_auc_{label_name}",
+                aurocs_per_class[i],
+                on_epoch=True,
+                sync_dist=True,
+                prog_bar=False 
+            )
+
+        mean_auc = aurocs_per_class.mean()
         
-        # Логируем метрику
         self.log(
             "val_auc",
-            auroc,
+            mean_auc,
             prog_bar=True,
             on_epoch=True,
             sync_dist=True,
         )
 
-        # Очищаем списки для следующей эпохи
+        # Очищаем списки
         self.val_preds.clear()
         self.val_labels.clear()
 
@@ -204,7 +213,7 @@ def train_model(
     enc_cfg = cfg["encoder"]
 
     model = RSNAKADLightningModule(
-        num_classes=len(label_names),
+        labels=label_names,
         epochs=cfg["epochs"],
         lr=cfg["learning_rate"],
         encoder_name=str(enc_cfg["name"]),
@@ -215,7 +224,7 @@ def train_model(
     )
 
 
-    logger = create_logger(cfg)
+    logger = create_logger(cfg, run_name=run_name)
 
     logger.log_hyperparams(cfg)
 
@@ -224,7 +233,7 @@ def train_model(
     if not run_name:
         run_name = "default"
 
-    model_chekpoint = ModelCheckpoint(
+    model_checkpoint = ModelCheckpoint(
         dirpath=checkpoint_dir,
         filename=f"{run_name}/" + "best_{epoch}-{val_auc:.4f}",
         monitor="val_auc",
@@ -233,10 +242,22 @@ def train_model(
         verbose=True
     )
 
+    checkpoints = [
+        ModelCheckpoint(
+                dirpath=checkpoint_dir,
+                filename=f"{run_name}/{label_name}" + "_{epoch}-{" + f"val_auc_{label_name}"+":.4f}",
+                monitor=f"val_auc_{label_name}",
+                mode="max",
+                save_top_k=1,
+                verbose=True
+            )
+        for label_name in label_names
+    ]
+
     callbacks = [
-        model_chekpoint, 
+        model_checkpoint, 
         LearningRateMonitor(logging_interval="epoch"),
-        
+        *checkpoints
     ]
 
     accelerator = "gpu" if torch.cuda.is_available() else "cpu"
@@ -271,25 +292,28 @@ def train_model(
 
     trainer.fit(model, train_dataloaders=train_dataloader, val_dataloaders=val_dataloader)
 
-    best_path = model_chekpoint.best_model_path
-    best_metric = model_chekpoint.best_model_score
+    best_path = model_checkpoint.best_model_path
+    best_metric = model_checkpoint.best_model_score
 
     
     print("Best checkpoint:", best_path)
-    export(best_path)
-    
+    export(best_path, cfg)
+    for checkpoint in checkpoints:
+        path = checkpoint.best_model_path
+        export(path, cfg)
+
     return {
         "best": best_path,
         "metric": best_metric,
-        "data": cfg["pseudo_csv"],
+        "data": cfg["train_df_path"],
     }
 
 if __name__ == "__main__":
     torch.set_float32_matmul_precision("high")
 
     parser = ArgumentParser()
-    parser.add_argument('--config_path',default="configs/default.yaml", help='Конфиг')
-    parser.add_argument('--run_name', help='Конфиг')
+    parser.add_argument('--config_path',default="configs/default.yaml", help='Config path')
+    parser.add_argument('--run_name', help='Run name')
 
     args = parser.parse_args()
 

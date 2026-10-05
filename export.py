@@ -6,8 +6,10 @@ from typing import List, Dict
 
 from models import RSNAKADModel
 from torchmetrics import AUROC
-
+from argparse import ArgumentParser
 import os
+
+from utils import load_config
 
 class RSNAKADWrapper(pl.LightningModule):
     def __init__(
@@ -68,7 +70,26 @@ def export(ckpt_path, cfg):
 
 
     checkpoint_dir = os.path.dirname(ckpt_path)
-    output_path = os.path.join(checkpoint_dir, "model.torchscript")
+    filename = os.path.basename(ckpt_path)
+    output_path = os.path.join(checkpoint_dir, f"{filename[:-5]}.torchscript")
     print(f"Saving torchscript to: {output_path}")
+
+    slice_size = cfg["crop_size"]
     
-    model.to_torchscript(output_path)
+    model.to_torchscript(output_path, method='trace', example_inputs=(torch.randn(2, 16, 1, *slice_size), torch.randn(2, 16, 1, *slice_size), torch.randn(2, 16, 1, *slice_size)))
+
+
+if __name__ == "__main__":
+    torch.set_float32_matmul_precision("high")
+
+    parser = ArgumentParser()
+    parser.add_argument('--config_path',default="configs/default.yaml", help='Config path')
+    parser.add_argument('--ckpt_path', help='Checkpoint path')
+
+    args = parser.parse_args()
+
+    config_path = args.config_path
+    ckpt_path = args.ckpt_path
+    config = load_config(config_path)
+
+    export(ckpt_path, config)
