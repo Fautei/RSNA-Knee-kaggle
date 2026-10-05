@@ -18,8 +18,9 @@ from typing import Optional, List, Dict
 
 import pandas as pd
 
-from utils import create_logger
+from utils import create_logger, get_val_transform, get_train_transform, load_config, get_default_config
 from datasets import RSNAKADDataset
+from argparse import ArgumentParser
 
 class RSNAKADLightningModule(pl.LightningModule):
     def __init__(
@@ -150,21 +151,95 @@ class RSNAKADLightningModule(pl.LightningModule):
         return [optimizer], [scheduler]
 
 
+class RSNAKADLightningModule2(pl.LightningModule):
+    def __init__(
+        self,
+        num_classes,
+        epochs = 10,
+        lr = 1e-3,
+        encoder_name: str = "convnext_tiny.fb_in1k",
+        pretrained: bool = True,
+        n_queries: int = 16,
+        num_heads: int = 8,
+        pooling_inner_dim: int = 128, 
+    ):
+        super().__init__()
+        self.save_hyperparameters()
+        self.num_classes = num_classes
+
+        self.model = RSNAKADModel(
+            num_classes=self.num_classes,
+            encoder_name=encoder_name,
+            pretrained=pretrained,
+            n_queries=n_queries,
+            num_heads=num_heads,
+            pooling_inner_dim=pooling_inner_dim
+        )
+
+        self.val_auroc = AUROC(
+            task='multilabel',
+            num_labels=num_classes,
+            average='macro'  # или 'weighted', 'micro' в зависимости от задачи
+        )
+
+        self.val_preds: List[torch.Tensor] = []
+        self.val_labels: List[torch.Tensor] = []
+
+
+    def forward(self, x1: torch.Tensor, x2: torch.Tensor, x3: torch.Tensor) -> torch.Tensor:
+        x = torch.cat([x1, x2, x3], dim=1)
+        return self.model(x)
+
 def train_model(
-    train_dataloader,
-    val_dataloader,
     cfg: Optional[dict] = None,
     limit_train_batches: Optional[float] = None,
     limit_val_batches: Optional[float] = None,
 ):
     pl.seed_everything(int(cfg["seed"]), workers=True)
 
+    val_studies = pd.read_csv(cfg["val_df_path"])
+    train_studies = pd.read_csv(cfg["train_df_path"])
+
+    val_uids = set(val_studies["StudyInstanceUID"].unique())
+    train_studies = train_studies[
+            ~train_studies["StudyInstanceUID"].isin(val_uids)
+        ].copy()
+
+    train_series = pd.read_csv(cfg["train_series_path"])
+    val_series = pd.read_csv(cfg["val_series_path"])
+
+    label_columns = cfg["label_columns"]
+    train_series_dir = cfg["train_series_dir"]
+    val_series_dir = cfg["val_series_dir"]
+    batch_size = cfg["batch_size"]
+    slice_count = cfg["slice_count"]
+
+    train_dataset = RSNAKADDataset(
+        df_studies=train_studies,
+        df_series=train_series,
+        label_columns=label_columns,
+        series_root=train_series_dir,
+        split="train",
+        transform=get_train_transform(cfg),
+        train_slices=slice_count
+    )
+
+    val_dataset = RSNAKADDataset(
+        df_studies=val_studies,
+        df_series=val_series,
+        label_columns=label_columns,
+        series_root=val_series_dir,
+        split="val",
+        transform=get_val_transform(cfg)
+    )
+
+    train_dataloader = torch.utils.data.DataLoader(train_dataset, batch_size, shuffle=True, num_workers=12)
+    val_dataloader = torch.utils.data.DataLoader(val_dataset, 1, shuffle=False, collate_fn=lambda x: x, num_workers=12)
+
     label_names = cfg["label_columns"]
     enc_cfg = cfg["encoder"]
 
-    model = RSNAKADLightningModule.load_from_checkpoint(
-        "checkpoints/best_epoch=9-val_auc=0.9206.ckpt",
-        weights_only=False,
+    model = RSNAKADLightningModule(
         num_classes=len(label_names),
         epochs=cfg["epochs"],
         lr=cfg["learning_rate"],
@@ -243,138 +318,12 @@ def train_model(
 if __name__ == "__main__":
     torch.set_float32_matmul_precision("high")
 
-    DATA_ROOT = "data"
+    parser = ArgumentParser()
+    parser.add_argument('config_path',default="configs/default.yaml", help='Конфиг')
 
-    has_gpu = torch.cuda.is_available()
+    args = parser.parse_args()
 
-    BATCH_SIZE = 8
-    NUM_EPOCHS = 150
-    LIMIT_TRAIN_BATCHES = 1.0
-    LIMIT_VAL_BATCHES = 1.0
-    PRECISION = "16-mixed"
+    config_path = args.config_path
+    config = load_config(config_path)
 
-    SLICE_COUNT = 32
-    SLICE_SIZE = (256, 256)
-
-    # Encoder для 2.5D
-    ENCODER_NAME = "efficientnet_b3.ra2_in1k"  # можно base/large, но тяжелее
-    ENCODER_PRETRAINED = True
-    N_QUERIES = 16
-    NUM_HEADS = 8
-    INNER_DIM = 128
-
-    label_columns = [
-        "ACL",
-        "MCL",
-        "Medial Meniscus",
-        "Lateral Meniscus",
-        "Medial OA",
-        "Lateral OA",
-        "PF OA",
-        "Effusion",
-        "Synovitis",
-        "Baker's",
-        "Contusion",
-        "Fracture",
-    ]
-
-    CONFIG = dict(
-        seed=42,
-        data_root=DATA_ROOT,
-        label_columns=label_columns,
-        batch_size=BATCH_SIZE,
-        num_workers=12,
-        epochs=NUM_EPOCHS,
-        learning_rate=3e-4,
-        weight_decay=1e-2,
-        precision=PRECISION,
-        gpus=1,
-        limit_train_batches=LIMIT_TRAIN_BATCHES,
-        limit_val_batches=LIMIT_VAL_BATCHES,
-        accumulate_grad_batches=2,
-
-        slice_count=SLICE_COUNT,
-        slice_size=SLICE_SIZE,
-        encoder=dict(
-            name=ENCODER_NAME,
-            pretrained=ENCODER_PRETRAINED,
-            n_queries=N_QUERIES,
-            num_heads=NUM_HEADS,
-            inner_dim=INNER_DIM
-        ),
-        mlflow=dict(
-            tracking_uri="mlruns",
-            experiment_name="knee_mri_multilabel",
-            run_name=f"knee_2p5d_{ENCODER_NAME}_{N_QUERIES}q",
-        ),
-    )
-
-    print("DATA_ROOT =", DATA_ROOT)
-    print("CUDA =", has_gpu)
-    print("BATCH_SIZE =", BATCH_SIZE)
-    print("EPOCHS =", NUM_EPOCHS)
-    print("SLICE_SIZE =", SLICE_SIZE)
-    print("ENCODER =", ENCODER_NAME)
-
-
-    val_studies = pd.read_csv("/home/maxim/Desktop/RSNA KAD/data/valid.csv")
-    train_studies = pd.read_csv("/home/maxim/Desktop/RSNA KAD/data/refined_predictions_advanced.csv")
-
-    val_uids = set(val_studies["StudyInstanceUID"].unique())
-    train_studies = train_studies[
-            ~train_studies["StudyInstanceUID"].isin(val_uids)
-        ].copy()
-
-    df_series = pd.read_csv("/home/maxim/Desktop/RSNA KAD/data/train_series.csv")
-
-    from monai.transforms import (
-        Compose,
-        Resized,
-        RandFlipd,
-        NormalizeIntensityd,
-        RandZoomd,
-        CenterSpatialCropd
-    )
-
-    def get_train_transform() -> Compose:
-        return Compose(
-            [
-                Resized(keys=["image_axial", "image_sagittal", "image_coronal"], spatial_size=(-1, 384, 384), allow_missing_keys=True),
-                RandZoomd(keys=["image_axial", "image_sagittal", "image_coronal"], prob=0.2, min_zoom=0.8, max_zoom=1.2, padding_mode="constant", allow_missing_keys=True),
-                RandFlipd(keys=["image_axial", "image_coronal"], prob=0.5, spatial_axis=[-1], allow_missing_keys=True),
-                CenterSpatialCropd(keys=["image_axial", "image_sagittal", "image_coronal"], roi_size=(-1, 256, 256), allow_missing_keys=True),
-                NormalizeIntensityd(keys=["image_axial", "image_sagittal", "image_coronal"], allow_missing_keys=True),
-            ]
-        )
-
-    def get_val_transform() -> Compose:
-        return Compose(
-            [
-                Resized(keys=["image_axial", "image_sagittal", "image_coronal"], spatial_size=(-1, 384, 384), allow_missing_keys=True),
-                CenterSpatialCropd(keys=["image_axial", "image_sagittal", "image_coronal"], roi_size=(-1, *SLICE_SIZE), allow_missing_keys=True),
-                NormalizeIntensityd(keys=["image_axial", "image_sagittal", "image_coronal"], allow_missing_keys=True),
-            ]
-        )
-
-    train_dataset = RSNAKADDataset(
-        df_studies=train_studies,
-        df_series=df_series,
-        label_columns=label_columns,
-        series_root="/home/maxim/Desktop/RSNA KAD/data/train_series",
-        split="train",
-        transform=get_train_transform()
-    )
-
-    val_dataset = RSNAKADDataset(
-        df_studies=val_studies,
-        df_series=df_series,
-        label_columns=label_columns,
-        series_root="/home/maxim/Desktop/RSNA KAD/data/train_series",
-        split="val",
-        transform=get_val_transform()
-    )
-
-    train_dataloader = torch.utils.data.DataLoader(train_dataset, 8, shuffle=True, num_workers=12)
-    val_dataloader = torch.utils.data.DataLoader(val_dataset, 1, shuffle=False, collate_fn=lambda x: x, num_workers=12)
-
-    train_model(train_dataloader, val_dataloader, CONFIG)
+    train_model(config)
