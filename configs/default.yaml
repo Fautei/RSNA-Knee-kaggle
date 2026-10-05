@@ -35,8 +35,7 @@ limit_val_batches: 1.0
 max_zoom: 1.2
 min_zoom: 0.8
 mlflow:
-  experiment_name: knee_mri_multilabel
-  run_name: knee_2p5d_efficientnet_b3.ra2_in1k_16q
+  experiment_name: rsna_kad
   tracking_uri: mlruns
 num_workers: 12
 precision: 16-mixed

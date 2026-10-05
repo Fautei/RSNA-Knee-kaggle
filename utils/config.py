@@ -1,4 +1,7 @@
 import yaml
+import os
+
+
 
 DATA_ROOT = "data"
 
@@ -73,8 +76,7 @@ CONFIG = dict(
     ),
     mlflow=dict(
         tracking_uri="mlruns",
-        experiment_name="knee_mri_multilabel",
-        run_name=f"knee_2p5d_{ENCODER_NAME}_{N_QUERIES}q",
+        experiment_name="rsna_kad",
     ),
 )
 
@@ -82,7 +84,10 @@ def get_default_config():
     return CONFIG
 
 def load_config(path):
-    with open(path, "w") as f:
+    print(f"Loading config from: {path}")
+    if not os.path.exists(path):
+        raise FileNotFoundError(f"Config file not found: {path}")
+    with open(path, "r") as f:
         config = yaml.safe_load(f)
     return config
 

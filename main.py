@@ -15,12 +15,12 @@ from pytorch_lightning.callbacks import (
 )
 
 from typing import Optional, List, Dict
-
+from argparse import ArgumentParser
 import pandas as pd
 
 from utils import create_logger, get_val_transform, get_train_transform, load_config, get_default_config
 from datasets import RSNAKADDataset
-from argparse import ArgumentParser
+from export import export
 
 class RSNAKADLightningModule(pl.LightningModule):
     def __init__(
@@ -151,47 +151,11 @@ class RSNAKADLightningModule(pl.LightningModule):
         return [optimizer], [scheduler]
 
 
-class RSNAKADLightningModule2(pl.LightningModule):
-    def __init__(
-        self,
-        num_classes,
-        epochs = 10,
-        lr = 1e-3,
-        encoder_name: str = "convnext_tiny.fb_in1k",
-        pretrained: bool = True,
-        n_queries: int = 16,
-        num_heads: int = 8,
-        pooling_inner_dim: int = 128, 
-    ):
-        super().__init__()
-        self.save_hyperparameters()
-        self.num_classes = num_classes
 
-        self.model = RSNAKADModel(
-            num_classes=self.num_classes,
-            encoder_name=encoder_name,
-            pretrained=pretrained,
-            n_queries=n_queries,
-            num_heads=num_heads,
-            pooling_inner_dim=pooling_inner_dim
-        )
-
-        self.val_auroc = AUROC(
-            task='multilabel',
-            num_labels=num_classes,
-            average='macro'  # или 'weighted', 'micro' в зависимости от задачи
-        )
-
-        self.val_preds: List[torch.Tensor] = []
-        self.val_labels: List[torch.Tensor] = []
-
-
-    def forward(self, x1: torch.Tensor, x2: torch.Tensor, x3: torch.Tensor) -> torch.Tensor:
-        x = torch.cat([x1, x2, x3], dim=1)
-        return self.model(x)
 
 def train_model(
     cfg: Optional[dict] = None,
+    run_name: Optional[str] = None,
     limit_train_batches: Optional[float] = None,
     limit_val_batches: Optional[float] = None,
 ):
@@ -233,8 +197,8 @@ def train_model(
         transform=get_val_transform(cfg)
     )
 
-    train_dataloader = torch.utils.data.DataLoader(train_dataset, batch_size, shuffle=True, num_workers=12)
-    val_dataloader = torch.utils.data.DataLoader(val_dataset, 1, shuffle=False, collate_fn=lambda x: x, num_workers=12)
+    train_dataloader = torch.utils.data.DataLoader(train_dataset, batch_size, shuffle=True, num_workers=cfg["num_workers"])
+    val_dataloader = torch.utils.data.DataLoader(val_dataset, 1, shuffle=False, collate_fn=lambda x: x, num_workers=cfg["num_workers"])
 
     label_names = cfg["label_columns"]
     enc_cfg = cfg["encoder"]
@@ -257,17 +221,20 @@ def train_model(
 
     checkpoint_dir = "checkpoints"
 
-    chpt = ModelCheckpoint(
-                dirpath=checkpoint_dir,
-                filename="best_{epoch}-{val_auc:.4f}",
-                monitor="val_auc",
-                mode="max",
-                save_top_k=1,
-                verbose=True
-            )
+    if not run_name:
+        run_name = "default"
+
+    model_chekpoint = ModelCheckpoint(
+        dirpath=checkpoint_dir,
+        filename=f"{run_name}/" + "best_{epoch}-{val_auc:.4f}",
+        monitor="val_auc",
+        mode="max",
+        save_top_k=1,
+        verbose=True
+    )
 
     callbacks = [
-        chpt, 
+        model_chekpoint, 
         LearningRateMonitor(logging_interval="epoch"),
         
     ]
@@ -304,11 +271,13 @@ def train_model(
 
     trainer.fit(model, train_dataloaders=train_dataloader, val_dataloaders=val_dataloader)
 
+    best_path = model_chekpoint.best_model_path
+    best_metric = model_chekpoint.best_model_score
 
-    best_path = chpt.best_model_path
-    best_metric = chpt.best_model_score
     
     print("Best checkpoint:", best_path)
+    export(best_path)
+    
     return {
         "best": best_path,
         "metric": best_metric,
@@ -319,11 +288,12 @@ if __name__ == "__main__":
     torch.set_float32_matmul_precision("high")
 
     parser = ArgumentParser()
-    parser.add_argument('config_path',default="configs/default.yaml", help='Конфиг')
+    parser.add_argument('--config_path',default="configs/default.yaml", help='Конфиг')
+    parser.add_argument('--run_name', help='Конфиг')
 
     args = parser.parse_args()
 
     config_path = args.config_path
     config = load_config(config_path)
 
-    train_model(config)
+    train_model(config, args.run_name)
