@@ -298,12 +298,15 @@ def train_model(
     
     print("Best checkpoint:", best_path)
     export(best_path, cfg)
+    best_models = []
     for checkpoint in checkpoints:
         path = checkpoint.best_model_path
+        best_models.append(path)
         export(path, cfg)
 
     return {
         "best": best_path,
+        "best_per_class": best_models,
         "metric": best_metric,
         "data": cfg["train_df_path"],
     }

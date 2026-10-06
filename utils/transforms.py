@@ -8,7 +8,8 @@ from monai.transforms import (
     RandGaussianNoised,
     RandScaleIntensityd,
     RandShiftIntensityd,
-    RandAdjustContrastd
+    RandAdjustContrastd,
+    RandCoarseDropoutd
 )
 
 def get_train_transform(cfg) -> Compose:
@@ -36,6 +37,7 @@ def get_train_transform(cfg) -> Compose:
         RandFlipd(keys=["image_axial", "image_coronal"], prob=flip_prob, spatial_axis=[-1], allow_missing_keys=True),
         CenterSpatialCropd(keys=keys, roi_size=(-1, *crop_size), allow_missing_keys=True),
         RandGaussianNoised(keys=keys, prob=noise_prob, mean=0.0, std=noise_std, allow_missing_keys=True),
+        #RandCoarseDropoutd(keys=keys, prob=0.2, holes=2, spatial_size=(16, 16), fill_value=0, allow_missing_keys=True),
         RandScaleIntensityd(keys=keys, prob=scale_prob, factors=scale_factors, allow_missing_keys=True),
         RandShiftIntensityd(keys=keys, prob=shift_prob, offsets=shift_offsets, allow_missing_keys=True),
         RandAdjustContrastd(keys=keys, prob=contrast_prob, gamma=contrast_gamma, allow_missing_keys=True),

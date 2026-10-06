@@ -2,7 +2,7 @@ accumulate_grad_batches: 1
 adjust_contrast_gamma:
 - 0.7
 - 1.5
-adjust_contrast_prob: 0.0
+adjust_contrast_prob: 0.2
 batch_size: 4
 crop_size:
 - 256
@@ -12,9 +12,9 @@ encoder:
   inner_dim: 256
   n_queries: 64
   name: efficientnet_b0.ra_in1k
-  num_heads: 32
+  num_heads: 8
   pretrained: true
-epochs: 15
+epochs: 1
 flip_prob: 0.5
 gpus: 1
 image_size:
@@ -45,13 +45,13 @@ noise_prob: 0.1
 noise_std: 1.0
 num_workers: 12
 precision: 16-mixed
-scale_intensity_factors: 0.1
+scale_intensity_factors: 0.2
 scale_intensity_prob: 0.0
 seed: 42
-shift_intensity_offsets: 0.1
+shift_intensity_offsets: 0.5
 shift_intensity_prob: 0.0
 slice_count: 32
-train_df_path: /home/maxim/Desktop/RSNA KAD/data/refined_predictions_advanced.csv
+train_df_path: oof_predictions_off on oof preds.csv
 train_series_dir: /home/maxim/Desktop/RSNA KAD/data/train_series
 train_series_path: /home/maxim/Desktop/RSNA KAD/data/train_series.csv
 val_df_path: /home/maxim/Desktop/RSNA KAD/data/valid.csv
