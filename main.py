@@ -17,6 +17,7 @@ from pytorch_lightning.callbacks import (
 from typing import Optional, List, Dict
 from argparse import ArgumentParser
 import pandas as pd
+import os
 
 from utils import create_logger, get_val_transform, get_train_transform, load_config, get_default_config
 from datasets import RSNAKADDataset
@@ -170,22 +171,24 @@ def train_model(
 ):
     pl.seed_everything(int(cfg["seed"]), workers=True)
 
-    val_studies = pd.read_csv(cfg["val_df_path"])
-    train_studies = pd.read_csv(cfg["train_df_path"])
+    val_studies = pd.read_csv(cfg["val_df_path"], dtype={"StudyInstanceUID": str})
+    train_studies = pd.read_csv(cfg["train_df_path"], dtype={"StudyInstanceUID": str})
 
     val_uids = set(val_studies["StudyInstanceUID"].unique())
     train_studies = train_studies[
             ~train_studies["StudyInstanceUID"].isin(val_uids)
         ].copy()
 
-    train_series = pd.read_csv(cfg["train_series_path"])
-    val_series = pd.read_csv(cfg["val_series_path"])
+    train_series = pd.read_csv(cfg["train_series_path"], dtype={"StudyInstanceUID": str, "SeriesInstanceUID":str})
+    val_series = pd.read_csv(cfg["val_series_path"], dtype={"StudyInstanceUID": str, "SeriesInstanceUID":str})
 
     label_columns = cfg["label_columns"]
     train_series_dir = cfg["train_series_dir"]
     val_series_dir = cfg["val_series_dir"]
     batch_size = cfg["batch_size"]
     slice_count = cfg["slice_count"]
+
+   
 
     train_dataset = RSNAKADDataset(
         df_studies=train_studies,
@@ -223,19 +226,21 @@ def train_model(
         pooling_inner_dim=int(enc_cfg["inner_dim"])
     )
 
-
     logger = create_logger(cfg, run_name=run_name)
 
     logger.log_hyperparams(cfg)
 
-    checkpoint_dir = "checkpoints"
-
     if not run_name:
         run_name = "default"
 
+    checkpoint_dir = f"checkpoints/{run_name}"
+
+    train_df_name = os.path.basename(cfg["train_df_path"][:-4])
+
+
     model_checkpoint = ModelCheckpoint(
         dirpath=checkpoint_dir,
-        filename=f"{run_name}/" + "best_{epoch}-{val_auc:.4f}",
+        filename=f"{train_df_name}" + "_{epoch}-{val_auc:.4f}",
         monitor="val_auc",
         mode="max",
         save_top_k=1,
@@ -245,7 +250,7 @@ def train_model(
     checkpoints = [
         ModelCheckpoint(
                 dirpath=checkpoint_dir,
-                filename=f"{run_name}/{label_name}" + "_{epoch}-{" + f"val_auc_{label_name}"+":.4f}",
+                filename=f"per_class_checkpoints/" + f"{train_df_name}" + "_{epoch}-{" + f"val_auc_{label_name}"+":.4f}",
                 monitor=f"val_auc_{label_name}",
                 mode="max",
                 save_top_k=1,
@@ -274,6 +279,8 @@ def train_model(
     if limit_val_batches is None:
         limit_val_batches = float(cfg["limit_val_batches"])
 
+    val_check_interval = cfg.get("val_check_interval")
+
     trainer = pl.Trainer(
         max_epochs=cfg["epochs"],
         accelerator=accelerator,
@@ -281,7 +288,7 @@ def train_model(
         precision=precision,
         logger=[logger],
         callbacks=callbacks,
-        #val_check_interval=500,
+        val_check_interval=val_check_interval,
         num_sanity_val_steps=2,
         limit_train_batches=limit_train_batches,
         limit_val_batches=limit_val_batches,

@@ -69,6 +69,8 @@ CONFIG = dict(
     adjust_contrast_prob=0.0,
     adjust_contrast_gamma=(0.7, 1.5),
 
+    val_check_interval = 200,
+
     train_df_path="/home/maxim/Desktop/RSNA KAD/data/refined_predictions_advanced.csv",
     val_df_path="/home/maxim/Desktop/RSNA KAD/data/valid.csv",
     train_series_path="/home/maxim/Desktop/RSNA KAD/data/train_series.csv",

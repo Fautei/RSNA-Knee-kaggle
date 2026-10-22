@@ -54,6 +54,7 @@ slice_count: 32
 train_df_path: /home/maxim/Desktop/RSNA KAD/data/refined_predictions_advanced.csv
 train_series_dir: /home/maxim/Desktop/RSNA KAD/data/train_series
 train_series_path: /home/maxim/Desktop/RSNA KAD/data/train_series.csv
+val_check_interval: 200
 val_df_path: /home/maxim/Desktop/RSNA KAD/data/valid.csv
 val_series_dir: /home/maxim/Desktop/RSNA KAD/data/train_series
 val_series_path: /home/maxim/Desktop/RSNA KAD/data/train_series.csv

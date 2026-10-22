@@ -27,20 +27,20 @@ def generate_oof_predictions(cfg: dict, run_name: str, output_csv_path: str):
     train_studies = pd.read_csv(cfg["train_df_path"])
     val_studies = pd.read_csv(cfg["val_df_path"])
 
+    # Исключаем val_studies из train_studies
     val_uids = set(val_studies["StudyInstanceUID"].unique())
     train_studies = train_studies[
             ~train_studies["StudyInstanceUID"].isin(val_uids)
         ].reset_index(drop=True).copy()
 
-    print(len(train_studies))
+    print(f"Train studies after excluding val: {len(train_studies)}")
+    print(f"Val studies to include in each fold: {len(val_studies)}")
     
     train_series = pd.read_csv(cfg["train_series_path"])
     val_series = pd.read_csv(cfg["val_series_path"])
 
     label_columns = cfg["label_columns"]
     n_folds = cfg.get("n_folds", 3) 
-    
-    oof_preds = np.zeros((len(train_studies), len(label_columns)))
     
     train_studies['fold'] = -1
 
@@ -52,25 +52,29 @@ def generate_oof_predictions(cfg: dict, run_name: str, output_csv_path: str):
         train_studies.loc[val_idx, 'fold'] = fold_idx
         
         current_train_studies = train_studies.iloc[train_idx].reset_index(drop=True)
-        current_val_studies = train_studies.iloc[val_idx].reset_index(drop=True) # Это наш OOF set
+        current_val_studies = train_studies.iloc[val_idx].reset_index(drop=True)  # OOF set из train
+        
+        # Добавляем val_studies к текущему валидационному сету
+        combined_val_studies = pd.concat([current_val_studies, val_studies], ignore_index=True)
+        print(f"Combined validation set size: {len(combined_val_studies)} (OOF: {len(current_val_studies)}, Val: {len(val_studies)})")
 
         checkpoint_dir = os.path.join("checkpoints", run_name)
         os.makedirs(checkpoint_dir, exist_ok=True)
 
-        # train model require csv
+        # Сохраняем train данные для обучения модели
         df_path = f"{checkpoint_dir}/fold_{fold_idx}.csv"
         current_train_studies.to_csv(df_path)
         cfg["train_df_path"] = df_path
 
-        results = train_model(cfg, run_name + f"fold_{fold_idx}")
+        results = train_model(cfg, run_name + f"_fold_{fold_idx}")
         
-        # Датасет для получения OOF предсказаний (отложенный фолд)
+        # Датасет для получения предсказаний (OOF + val)
         oof_dataset = RSNAKADDataset(
-            df_studies=current_val_studies,
+            df_studies=combined_val_studies,
             df_series=train_series, 
             label_columns=label_columns,
             series_root=cfg["train_series_dir"],
-            split="val", 
+            split="oof",
             transform=get_val_transform(cfg)
         )
 
@@ -122,22 +126,48 @@ def generate_oof_predictions(cfg: dict, run_name: str, output_csv_path: str):
                     
                     if features:
                         features = torch.cat(features, dim=2)
-                    logits = model.model.logits(features)
+                    
+                    # Flip TTA
+                    features2 = []
+                    for item in images:
+                        image = item["image"].unsqueeze(0).to("cuda:0").half().flip(dims=[-1])
+                        feats = model.model.features(image) 
+                        features2.append(feats)
+                    
+                    if features2:
+                        features2 = torch.cat(features2, dim=2)
+                    
+                    logits = model.model.logits(torch.cat([features, features2], dim=0)).mean(dim=0, keepdim=True)
                     
                     probs = torch.sigmoid(logits)[:, model_idx].detach().cpu().numpy()
                     all_class_preds[model_idx].append(probs)
 
+        # Собираем предсказания для этого фолда
+        fold_preds = np.zeros((len(combined_val_studies), len(label_columns)))
         for i in range(len(label_columns)):
             class_preds_array = np.concatenate(all_class_preds[i], axis=0)
-            oof_preds[val_idx, i] = class_preds_array
+            fold_preds[:, i] = class_preds_array
 
-    oof_df = train_studies.copy()
-    for i, col in enumerate(label_columns):
-        oof_df[col] = oof_preds[:, i]
+        # Создаем DataFrame с предсказаниями для этого фолда
+        fold_pred_df = combined_val_studies.copy()
+        for i, col in enumerate(label_columns):
+            fold_pred_df[col] = fold_preds[:, i]
         
-    output_path = f"{output_csv_path}/{run_name}.csv"
-    oof_df.to_csv(output_path, index=False)
-    print(f"OOF predictions saved to {output_path}")
+        # Добавляем информацию о фолде
+        fold_pred_df['fold'] = fold_idx
+        
+        # Сохраняем предсказания для каждого фолда в отдельный файл
+        output_path = os.path.join(output_csv_path, f"{run_name}_fold_{fold_idx}.csv")
+        fold_pred_df.to_csv(output_path, index=False)
+        print(f"Fold {fold_idx} predictions saved to {output_path}")
+        
+        # Очищаем память
+        del models
+        torch.cuda.empty_cache()
+
+    print("\n=== All folds completed ===")
+    print(f"Individual fold predictions saved in: {output_csv_path}")
+    print("Files format: {run_name}_fold_0.csv, {run_name}_fold_1.csv, ...")
 
 if __name__ == "__main__":
     torch.set_float32_matmul_precision("high")

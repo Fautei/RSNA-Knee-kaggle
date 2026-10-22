@@ -11,11 +11,11 @@ data_root: data
 encoder:
   inner_dim: 256
   n_queries: 64
-  name: efficientnet_b0.ra_in1k
+  name: efficientnetv2_rw_s.ra2_in1k
   num_heads: 8
   pretrained: true
-epochs: 1
-flip_prob: 0.5
+epochs: 12
+flip_prob: 0.0
 gpus: 1
 image_size:
 - 384
@@ -50,12 +50,13 @@ scale_intensity_prob: 0.0
 seed: 42
 shift_intensity_offsets: 0.5
 shift_intensity_prob: 0.0
-slice_count: 32
-train_df_path: oof_predictions_off on oof preds.csv
+slice_count: 64
+train_df_path: /home/maxim/Desktop/RSNA KAD/data/pseudo_4.csv
 train_series_dir: /home/maxim/Desktop/RSNA KAD/data/train_series
 train_series_path: /home/maxim/Desktop/RSNA KAD/data/train_series.csv
+val_check_interval: 200
 val_df_path: /home/maxim/Desktop/RSNA KAD/data/valid.csv
 val_series_dir: /home/maxim/Desktop/RSNA KAD/data/train_series
 val_series_path: /home/maxim/Desktop/RSNA KAD/data/train_series.csv
 weight_decay: 0.01
-zoom_prob: 0.5
+zoom_prob: 0.2

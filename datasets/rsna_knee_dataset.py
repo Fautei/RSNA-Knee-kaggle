@@ -29,13 +29,21 @@ class RSNAKADDataset(torch.utils.data.Dataset):
         self.series = df_series
         self.train_slices = train_slices
 
+        # Increase amount of studies by flipping their laterality:
+        if self.split == "val":
+            studies1 = self.studies.copy()
+            studies1["flip"] = 0
+            studies2 = self.studies.copy()
+            studies2["flip"] = 1
+            self.studies = pd.concat([studies1, studies2])
+
 
     def __len__(self) -> int:
         return len(self.studies)
 
     def __getitem__(self, idx: int) -> Dict:
         study = self.studies.iloc[idx]
-        study_uid = study["StudyInstanceUID"]
+        study_uid = str(study["StudyInstanceUID"])
         series = self.series[self.series["StudyInstanceUID"] == study_uid]
         label = study.loc[self.label_columns].values.astype(np.float32)
 
@@ -46,6 +54,7 @@ class RSNAKADDataset(torch.utils.data.Dataset):
                 series_uid = row["SeriesInstanceUID"]
                 series_path = os.path.join(self.series_root, study_uid, series_uid)
                 files = self._list_files_sorted_by_instance_number(series_path)
+
                 n_files = len(files)
                 plane = str.lower(row["Anatomical_Plane"])
                 key = f"image_{plane}"
@@ -104,11 +113,18 @@ class RSNAKADDataset(torch.utils.data.Dataset):
                 key = f"image_{plane}"
                 tensor = self.transform({
                     key: image
-                })
+                })[key]
+                
+                if self.split == "val":
+                    if plane in ["axial", "coronal"] and study["flip"] == 1:
+                        tensor = tensor.flip(dims=[3])
+                    elif plane == "sagittal" and study["flip"] == 1:
+                        tensor = tensor.flip(dims=[1])
+
                 item["images"].append({
                     "series_uid":series_uid,
                     "plane":plane,
-                    "image":tensor[key].permute(1, 0, 2, 3),
+                    "image":tensor.permute(1, 0, 2, 3),
                     "fat_suppresion":row["Fat_Suppression"],
                     "fluid_sensetive":row["Fluid_Sensitive"]
                 })
@@ -153,8 +169,8 @@ class RSNAKADDataset(torch.utils.data.Dataset):
 
 if __name__ == "__main__":
 
-    df_studies = pd.read_csv("/home/maxim/Desktop/RSNA KAD/data/valid.csv")
-    df_series = pd.read_csv("/home/maxim/Desktop/RSNA KAD/data/train_series.csv")
+    df_studies = pd.read_csv("/home/maxim/Desktop/RSNA KAD/extra_data/soft_labels_2.csv", dtype={"StudyInstanceUID": str})
+    df_series = pd.read_csv("/home/maxim/Desktop/RSNA KAD/extra_data/train_series_2.csv", dtype={"StudyInstanceUID": str, "SeriesInstanceUID":str})
 
     label_columns = [
         "ACL",
@@ -195,7 +211,7 @@ if __name__ == "__main__":
         df_studies=df_studies,
         df_series=df_series,
         label_columns=label_columns,
-        series_root="/home/maxim/Desktop/RSNA KAD/data/train_series",
+        series_root="/home/maxim/Desktop/RSNA KAD/extra_data/downloads2",
         split="train",
         transform=get_train_transform()
     )

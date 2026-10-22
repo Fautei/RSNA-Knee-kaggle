@@ -8,8 +8,9 @@ from models import RSNAKADModel
 from torchmetrics import AUROC
 from argparse import ArgumentParser
 import os
-
+import timm
 from utils import load_config
+from models.head import GatedCrossAttentionPooling
 
 class RSNAKADWrapper(pl.LightningModule):
     def __init__(
@@ -51,6 +52,69 @@ class RSNAKADWrapper(pl.LightningModule):
         return self.model(x)
 
 
+class Backbone(pl.LightningModule):
+    def __init__(
+        self,
+        encoder_name: str = "convnext_tiny.fb_in1k",
+
+    ):
+        super().__init__()
+
+        self.encoder = timm.create_model(
+            encoder_name,
+            pretrained=False,
+            in_chans=1,
+            num_classes=0,
+            global_pool="",
+        )
+
+        self.d_model = int(self.encoder.num_features)
+        self.norm = nn.BatchNorm2d(self.d_model)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+
+        B, N_slices, C, H, W = x.shape
+        x_flat = x.reshape(B * N_slices, C, H, W)
+
+        feats = self.encoder(x_flat)
+        feats = self.norm(feats)
+        #feats = self.do1(feats)
+
+        Cf, Hf, Wf = feats.shape[1:]
+        
+        feats_3d = feats.view(B, N_slices, Cf, Hf, Wf).permute(0, 2, 1, 3, 4).contiguous()
+
+        return feats_3d
+
+class Head(pl.LightningModule):
+    def __init__(
+        self,
+        feature_dim,
+        n_classes,
+        n_queries: int,
+        num_heads: int,
+        pooling_inner_dim: int
+    ):
+        super().__init__()
+
+        self.d_model=feature_dim
+
+        self.cap = GatedCrossAttentionPooling(
+            d_model=self.d_model,
+            n_queries=n_queries,
+            num_heads=num_heads,
+            gate_type="headwise",
+            inner_dim=pooling_inner_dim  # <-- например, 256 вместо 768
+        )
+        
+        # Classifier теперь работает с уменьшенной размерностью
+        self.classifier = nn.Linear(n_queries * pooling_inner_dim if pooling_inner_dim else n_queries * self.d_model, n_classes)
+
+    def forward(self, feats_3d):
+        pooled = self.cap(feats_3d)
+
+        return self.classifier(pooled)
+
 def export(ckpt_path, cfg):
     label_names = cfg["label_columns"]
     enc_cfg = cfg["encoder"]
@@ -68,6 +132,7 @@ def export(ckpt_path, cfg):
         pooling_inner_dim=int(enc_cfg["inner_dim"])
     )
 
+    device = next(model.parameters()).device
 
     checkpoint_dir = os.path.dirname(ckpt_path)
     filename = os.path.basename(ckpt_path)
@@ -78,6 +143,28 @@ def export(ckpt_path, cfg):
     
     model.to_torchscript(output_path, method='trace', example_inputs=(torch.randn(2, 16, 1, *slice_size), torch.randn(2, 16, 1, *slice_size), torch.randn(2, 16, 1, *slice_size)))
 
+    backbone = Backbone(encoder_name=str(enc_cfg["name"]),).to(device).eval()
+    backbone.encoder = model.model.encoder
+    backbone.norm = model.model.norm
+
+    d_model = backbone.d_model
+    head = Head(
+        feature_dim=d_model,
+        n_classes=len(label_names),
+        n_queries=int(enc_cfg["n_queries"]),
+        num_heads=int(enc_cfg["num_heads"]),
+        pooling_inner_dim=int(enc_cfg["inner_dim"])
+    ).to(device).eval()
+
+    head.cap = model.model.cap
+    head.classifier = model.model.classifier
+
+    part_dir = os.path.join(checkpoint_dir, f"{filename[:-5]}")
+    if not os.path.exists(part_dir):
+        os.makedirs(part_dir)
+
+    backbone.to_torchscript(os.path.join(part_dir, f"backbone.torchscript"), example_inputs=torch.randn(2, 16, 1, 256, 256), method="trace")
+    head.to_torchscript(os.path.join(part_dir, f"head.torchscript"), example_inputs=torch.randn(2, d_model, 16, 8, 8), method="trace")
 
 if __name__ == "__main__":
     torch.set_float32_matmul_precision("high")
